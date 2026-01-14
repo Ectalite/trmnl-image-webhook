@@ -9,11 +9,15 @@ Automatically upload images from your photo collection to your TRMNL e-ink displ
 - 📸 **Automatic Image Processing** - Scales and converts photos to e-ink format
 - 🎨 **Floyd-Steinberg Dithering** - Professional halftone effect for smooth gradients
 - 🖼️ **2-bit Grayscale** - 4 shades of gray for better quality than pure black & white
+- ✨ **Gamma Correction** - Brightens midtones for better e-ink visibility
+- 🖼️ **Frame Borders** - Optional decorative borders (line or rounded corners)
+- 🎨 **Color Output Mode** - Full RGB for Pimoroni Inky or similar color e-ink displays
 - 🎲 **Multiple Selection Modes** - Random, sequential, shuffle, newest, or oldest
 - 🔄 **Auto-Rotation** - Respects EXIF orientation data
 - 🖼️ **Flexible Layouts** - Auto, landscape, or portrait modes
 - 🎯 **Orientation Filtering** - Show only landscape or portrait photos (with smart caching)
 - 🎨 **Border Styles** - White, black, or blurred borders
+- 📏 **Adjustable Margins** - Add spacing around images for framed picture look
 - 📁 **Subfolder Support** - Organize photos in folders and subfolders
 - 🏷️ **Optional Labels** - Show filename or path on images
 - 🐳 **Docker Ready** - Easy deployment with docker-compose
@@ -78,6 +82,10 @@ That's it! Your TRMNL will start showing photos from your collection.
 | `ORIENTATION_FILTER` | `any` | Filter images: any/landscape/portrait |
 | `BORDER_STYLE` | `white` | Border style: white/black/blur |
 | `MARGIN` | `0` | Margin in pixels (0-100) for framed look |
+| `GAMMA` | `1.5` | Gamma correction (1.0-2.0, brightens midtones for e-ink) |
+| `FRAME_BORDER` | `none` | Frame border: none/line/rounded (only with MARGIN > 0) |
+| `FRAME_BORDER_WIDTH` | `2` | Frame border width in pixels (1-10) |
+| `OUTPUT_MODE` | `grayscale` | Output: grayscale (TRMNL) or color (Pimoroni Inky) |
 | `INTERVAL_MINUTES` | `60` | Minutes between uploads |
 | `SELECTION_MODE` | `random` | How to pick images (see below) |
 | `INCLUDE_SUBFOLDERS` | `true` | Include images from subdirectories |
@@ -168,6 +176,37 @@ INTERVAL_MINUTES=15
 IMAGE_LABEL=path
 ```
 
+### Framed Picture Gallery
+
+```bash
+MARGIN=40
+BORDER_STYLE=white
+FRAME_BORDER=line
+FRAME_BORDER_WIDTH=3
+GAMMA=1.5
+```
+
+### Classic Black Frame
+
+```bash
+MARGIN=60
+BORDER_STYLE=black
+FRAME_BORDER=rounded
+FRAME_BORDER_WIDTH=2
+```
+
+### Pimoroni Inky Color Display
+
+```bash
+OUTPUT_MODE=color
+DISPLAY_WIDTH=800
+DISPLAY_HEIGHT=480
+GAMMA=1.5
+MARGIN=30
+FRAME_BORDER=line
+WEBHOOK_URL=http://192.168.1.x:5000/display  # Your local Pi endpoint
+```
+
 ## Deployment
 
 ### Docker Compose (Recommended)
@@ -185,6 +224,34 @@ docker-compose down
 # Restart after config changes
 docker-compose restart
 ```
+
+### Synology NAS
+
+1. Enable Docker in Package Center
+2. Upload project folder to your NAS
+3. Edit `.env` with your settings
+4. SSH into NAS:
+```bash
+cd /volume1/docker/trmnl-image-webhook
+docker-compose up -d
+```
+
+### Raspberry Pi
+
+```bash
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+
+# Clone and configure
+git clone <repo-url>
+cd trmnl-image-webhook
+cp .env.example .env
+nano .env
+
+# Run
+docker-compose up -d
+```
+
 ## Debugging
 
 ### Check Logs
@@ -277,6 +344,7 @@ Both modes use Floyd-Steinberg dithering for professional halftone effects.
 DISPLAY_WIDTH=800
 DISPLAY_HEIGHT=480
 ```
+
 
 ### State Management
 
