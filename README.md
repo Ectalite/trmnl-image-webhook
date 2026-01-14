@@ -114,6 +114,73 @@ Example with label:
 IMAGE_LABEL=path
 ```
 
+### Gamma Correction
+
+Brightens midtones for better e-ink visibility. E-ink displays tend to look darker than regular screens, so gamma correction helps.
+
+```bash
+GAMMA=1.5  # Recommended for e-ink (default)
+GAMMA=1.0  # No correction (original brightness)
+GAMMA=1.8  # More aggressive brightening
+```
+
+### Frame Borders
+
+Add decorative borders around images for a framed picture look. Requires `MARGIN > 0`.
+
+```bash
+MARGIN=40              # Space around image
+FRAME_BORDER=line      # Style: none/line/rounded
+FRAME_BORDER_WIDTH=3   # Border thickness (1-10 pixels)
+BORDER_STYLE=white     # Background: white/black
+```
+
+**Examples:**
+- **Gallery style**: `MARGIN=60`, `FRAME_BORDER=line`, `BORDER_STYLE=black`
+- **Modern**: `MARGIN=30`, `FRAME_BORDER=rounded`, `BORDER_STYLE=white`
+- **Classic**: `MARGIN=50`, `FRAME_BORDER=line`, `FRAME_BORDER_WIDTH=5`
+
+### Color Output Mode
+
+For Pimoroni Inky or other color e-ink displays. Outputs full RGB instead of dithered grayscale.
+
+```bash
+OUTPUT_MODE=color                              # Enable color mode
+WEBHOOK_URL=http://192.168.1.x:5000/display  # Your local endpoint
+```
+
+**Note:** Color mode produces larger files (200-500KB) and is not compatible with TRMNL's cloud service. Use for local Pimoroni Inky setups only.
+
+### Image Fit Modes
+
+Control how images are scaled to the display:
+
+**Contain (default):**
+```bash
+IMAGE_FIT=contain
+```
+- Fits entire image on screen
+- Maintains aspect ratio
+- May show borders if image ratio doesn't match display
+- Best for preserving full image
+
+**Fill:**
+```bash
+IMAGE_FIT=fill
+```
+- Fills entire display
+- Maintains aspect ratio
+- May crop edges of image
+- Best for edge-to-edge display, no borders
+- Great for wallpaper-style images
+
+**Example - Full Screen Photos:**
+```bash
+IMAGE_FIT=fill
+MARGIN=0
+BORDER_STYLE=white
+```
+
 ## Image Processing
 
 ### What Happens to Your Photos

@@ -75,7 +75,8 @@ class ImageUploader:
                  layout: str = 'auto',
                  orientation_filter: str = 'any',
                  gamma: float = 1.5,
-                 output_mode: str = 'grayscale'):
+                 output_mode: str = 'grayscale',
+                 image_fit: str = 'contain'):
         self.webhook_url = webhook_url
         self.images_dir = Path(images_dir)
         self.interval_seconds = interval_minutes * 60
@@ -85,6 +86,7 @@ class ImageUploader:
         self.orientation_filter = orientation_filter
         self.gamma = gamma
         self.output_mode = output_mode
+        self.image_fit = image_fit
 
         # Adjust dimensions based on layout
         if layout == 'portrait':
@@ -319,7 +321,7 @@ class ImageUploader:
                 elif img.mode != 'RGB':
                     img = img.convert('RGB')
 
-                # 2. Resize Content
+                # 2. Resize Content based on IMAGE_FIT mode
                 margin = int(os.getenv('MARGIN', '0'))
                 margin = max(0, min(100, margin))
                 available_w = self.display_width - (2 * margin)
@@ -328,12 +330,38 @@ class ImageUploader:
                 img_ratio = img.width / img.height
                 display_ratio = available_w / available_h
 
-                if img_ratio > display_ratio:
-                    new_w, new_h = available_w, int(available_w / img_ratio)
-                else:
-                    new_h, new_w = available_h, int(available_h * img_ratio)
+                if self.image_fit == 'fill':
+                    # FILL MODE: Scale and crop to fill entire display (may crop image)
+                    if img_ratio > display_ratio:
+                        # Image is wider - scale by height, crop width
+                        new_h = available_h
+                        new_w = int(available_h * img_ratio)
+                    else:
+                        # Image is taller - scale by width, crop height
+                        new_w = available_w
+                        new_h = int(available_w / img_ratio)
 
-                img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                    # Center crop to exact size
+                    crop_x = (new_w - available_w) // 2
+                    crop_y = (new_h - available_h) // 2
+                    img_resized = img_resized.crop((
+                        crop_x,
+                        crop_y,
+                        crop_x + available_w,
+                        crop_y + available_h
+                    ))
+                    logger.info(f"  Fill mode: Scaled to {new_w}x{new_h}, cropped to {available_w}x{available_h}")
+                else:
+                    # CONTAIN MODE (default): Scale to fit, maintain aspect ratio (may have borders)
+                    if img_ratio > display_ratio:
+                        new_w, new_h = available_w, int(available_w / img_ratio)
+                    else:
+                        new_h, new_w = available_h, int(available_h * img_ratio)
+
+                    img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    logger.info(f"  Contain mode: Scaled to {new_w}x{new_h}")
 
                 # 3. Process based on output mode
                 if self.output_mode == 'color':
@@ -354,8 +382,14 @@ class ImageUploader:
                     canvas = Image.new('RGB', (self.display_width, self.display_height), bg_color)
 
                     # Paste color content
-                    x_offset = (self.display_width - new_w) // 2
-                    y_offset = (self.display_height - new_h) // 2
+                    if self.image_fit == 'fill':
+                        # Fill mode: image already cropped to exact size, paste with margin offset
+                        x_offset = margin
+                        y_offset = margin
+                    else:
+                        # Contain mode: center the image
+                        x_offset = (self.display_width - img_processed.width) // 2
+                        y_offset = (self.display_height - img_processed.height) // 2
                     canvas.paste(img_processed, (x_offset, y_offset))
 
                     # Add frame border if requested
@@ -395,8 +429,14 @@ class ImageUploader:
                     canvas = Image.new('L', (self.display_width, self.display_height), bg_color)
 
                     # 5. Paste Dithered Content onto Clean Canvas
-                    x_offset = (self.display_width - new_w) // 2
-                    y_offset = (self.display_height - new_h) // 2
+                    if self.image_fit == 'fill':
+                        # Fill mode: image already cropped to exact size, paste with margin offset
+                        x_offset = margin
+                        y_offset = margin
+                    else:
+                        # Contain mode: center the image
+                        x_offset = (self.display_width - img_processed.width) // 2
+                        y_offset = (self.display_height - img_processed.height) // 2
                     canvas.paste(img_processed, (x_offset, y_offset))
 
                     # 6. Add frame border if requested
@@ -809,6 +849,7 @@ def main():
     orientation_filter = os.getenv('ORIENTATION_FILTER', 'any').lower()
     gamma = float(os.getenv('GAMMA', '1.5'))
     output_mode = os.getenv('OUTPUT_MODE', 'grayscale').lower()
+    image_fit = os.getenv('IMAGE_FIT', 'contain').lower()
 
     # Validate configuration
     if not webhook_url:
@@ -849,6 +890,13 @@ def main():
         logger.error(f"Valid modes: {', '.join(valid_output_modes)}")
         exit(1)
 
+    # Validate image fit mode
+    valid_fit_modes = ['contain', 'fill']
+    if image_fit not in valid_fit_modes:
+        logger.error(f"Invalid IMAGE_FIT: {image_fit}")
+        logger.error(f"Valid modes: {', '.join(valid_fit_modes)}")
+        exit(1)
+
     # Create and run uploader
     uploader = ImageUploader(
         webhook_url=webhook_url,
@@ -861,7 +909,8 @@ def main():
         layout=layout,
         orientation_filter=orientation_filter,
         gamma=gamma,
-        output_mode=output_mode
+        output_mode=output_mode,
+        image_fit=image_fit
     )
 
     uploader.run()
