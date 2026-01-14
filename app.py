@@ -74,7 +74,8 @@ class ImageUploader:
                  display_height: int = 480,
                  layout: str = 'auto',
                  orientation_filter: str = 'any',
-                 gamma: float = 1.5):
+                 gamma: float = 1.5,
+                 output_mode: str = 'grayscale'):
         self.webhook_url = webhook_url
         self.images_dir = Path(images_dir)
         self.interval_seconds = interval_minutes * 60
@@ -83,6 +84,7 @@ class ImageUploader:
         self.layout = layout
         self.orientation_filter = orientation_filter
         self.gamma = gamma
+        self.output_mode = output_mode
 
         # Adjust dimensions based on layout
         if layout == 'portrait':
@@ -333,49 +335,82 @@ class ImageUploader:
 
                 img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-                # 3. Dither ONLY the resized image
-                img_l = img_resized.convert('L')
+                # 3. Process based on output mode
+                if self.output_mode == 'color':
+                    # COLOR MODE: Skip dithering, keep RGB, apply gamma to each channel
+                    logger.info(f"  Processing in color mode (RGB output)")
 
-                # Apply Gamma Correction
-                if self.gamma != 1.0:
-                    lut = [int(pow(i / 255.0, 1.0 / self.gamma) * 255.0) for i in range(256)]
-                    img_l = img_l.point(lut)
-                    logger.info(f"  Applied gamma correction: {self.gamma}")
-
-                bit_depth = int(os.getenv('BIT_DEPTH', '2'))
-                use_dither = os.getenv('USE_DITHERING', 'true').lower() == 'true'
-
-                if use_dither:
-                    logger.info(f"  Dithering image content (isolation mode)")
-                    if bit_depth == 1:
-                        img_processed = img_l.convert('1', dither=Image.Dither.FLOYDSTEINBERG).convert('L')
+                    if self.gamma != 1.0:
+                        # Apply gamma correction to RGB
+                        lut = [int(pow(i / 255.0, 1.0 / self.gamma) * 255.0) for i in range(256)]
+                        img_processed = img_resized.point(lambda x: lut[x])
+                        logger.info(f"  Applied gamma correction: {self.gamma}")
                     else:
-                        img_processed = self._dither_to_4_levels(img_l)
-                else:
-                    img_processed = img_l
+                        img_processed = img_resized
 
-                # 4. Create Clean Canvas
-                border_style = os.getenv('BORDER_STYLE', 'white').lower()
-                bg_color = 0 if border_style == 'black' else 255
-                canvas = Image.new('L', (self.display_width, self.display_height), bg_color)
+                    # Create RGB canvas
+                    border_style = os.getenv('BORDER_STYLE', 'white').lower()
+                    bg_color = (0, 0, 0) if border_style == 'black' else (255, 255, 255)
+                    canvas = Image.new('RGB', (self.display_width, self.display_height), bg_color)
 
-                # 5. Paste Dithered Content onto Clean Canvas
-                x_offset = (self.display_width - new_w) // 2
-                y_offset = (self.display_height - new_h) // 2
-                canvas.paste(img_processed, (x_offset, y_offset))
+                    # Paste color content
+                    x_offset = (self.display_width - new_w) // 2
+                    y_offset = (self.display_height - new_h) // 2
+                    canvas.paste(img_processed, (x_offset, y_offset))
 
-                # 6. Add frame border if requested
-                if margin > 0:
-                    canvas = self._add_frame_border(canvas, margin)
+                    # Add frame border if requested
+                    if margin > 0:
+                        canvas = self._add_frame_border(canvas, margin)
 
-                # 7. Generate final bytes
-                if bit_depth == 1:
-                    final_output = canvas.convert('1', dither=Image.Dither.NONE)
+                    # Save as RGB PNG with maximum compression
                     output = io.BytesIO()
-                    final_output.save(output, format='PNG', optimize=True)
+                    canvas.save(output, format='PNG', optimize=True, compress_level=9)
                     image_bytes = output.getvalue()
+
                 else:
-                    image_bytes = self._save_2bit_png(canvas)
+                    # GRAYSCALE MODE: Original dithering pipeline
+                    img_l = img_resized.convert('L')
+
+                    # Apply Gamma Correction
+                    if self.gamma != 1.0:
+                        lut = [int(pow(i / 255.0, 1.0 / self.gamma) * 255.0) for i in range(256)]
+                        img_l = img_l.point(lut)
+                        logger.info(f"  Applied gamma correction: {self.gamma}")
+
+                    bit_depth = int(os.getenv('BIT_DEPTH', '2'))
+                    use_dither = os.getenv('USE_DITHERING', 'true').lower() == 'true'
+
+                    if use_dither:
+                        logger.info(f"  Dithering image content (isolation mode)")
+                        if bit_depth == 1:
+                            img_processed = img_l.convert('1', dither=Image.Dither.FLOYDSTEINBERG).convert('L')
+                        else:
+                            img_processed = self._dither_to_4_levels(img_l)
+                    else:
+                        img_processed = img_l
+
+                    # 4. Create Clean Canvas
+                    border_style = os.getenv('BORDER_STYLE', 'white').lower()
+                    bg_color = 0 if border_style == 'black' else 255
+                    canvas = Image.new('L', (self.display_width, self.display_height), bg_color)
+
+                    # 5. Paste Dithered Content onto Clean Canvas
+                    x_offset = (self.display_width - new_w) // 2
+                    y_offset = (self.display_height - new_h) // 2
+                    canvas.paste(img_processed, (x_offset, y_offset))
+
+                    # 6. Add frame border if requested
+                    if margin > 0:
+                        canvas = self._add_frame_border(canvas, margin)
+
+                    # 7. Generate final bytes
+                    if bit_depth == 1:
+                        final_output = canvas.convert('1', dither=Image.Dither.NONE)
+                        output = io.BytesIO()
+                        final_output.save(output, format='PNG', optimize=True)
+                        image_bytes = output.getvalue()
+                    else:
+                        image_bytes = self._save_2bit_png(canvas)
 
                 # Save debug images
                 for old_file in Path('/data').glob('last_original.*'):
@@ -457,6 +492,7 @@ class ImageUploader:
         """
         Add decorative frame border around the image content.
         Only applies when margin > 0.
+        Supports both grayscale ('L') and color ('RGB') images.
         """
         frame_style = os.getenv('FRAME_BORDER', 'none').lower()
 
@@ -468,7 +504,21 @@ class ImageUploader:
 
         # Get background color from border style
         border_style = os.getenv('BORDER_STYLE', 'white').lower()
-        bg_color = 0 if border_style == 'black' else 255
+
+        # Set bg_color and frame_color based on image mode
+        if img.mode == 'RGB':
+            bg_color = (0, 0, 0) if border_style == 'black' else (255, 255, 255)
+            frame_color = (255, 255, 255) if border_style == 'black' else (0, 0, 0)
+        else:  # Grayscale
+            bg_color = 0 if border_style == 'black' else 255
+            frame_color = 255 if border_style == 'black' else 0
+
+        # Helper function to check if pixel matches background
+        def is_background(pixel):
+            if img.mode == 'RGB':
+                return pixel == bg_color
+            else:
+                return pixel == bg_color
 
         # Scan to find image boundaries
         pixels = img.load()
@@ -479,7 +529,7 @@ class ImageUploader:
         for x in range(margin, width - margin):
             has_content = False
             for y in range(height):
-                if pixels[x, y] != bg_color:
+                if not is_background(pixels[x, y]):
                     has_content = True
                     break
             if has_content:
@@ -491,7 +541,7 @@ class ImageUploader:
         for x in range(width - margin - 1, margin, -1):
             has_content = False
             for y in range(height):
-                if pixels[x, y] != bg_color:
+                if not is_background(pixels[x, y]):
                     has_content = True
                     break
             if has_content:
@@ -503,7 +553,7 @@ class ImageUploader:
         for y in range(margin, height - margin):
             has_content = False
             for x in range(width):
-                if pixels[x, y] != bg_color:
+                if not is_background(pixels[x, y]):
                     has_content = True
                     break
             if has_content:
@@ -515,7 +565,7 @@ class ImageUploader:
         for y in range(height - margin - 1, margin, -1):
             has_content = False
             for x in range(width):
-                if pixels[x, y] != bg_color:
+                if not is_background(pixels[x, y]):
                     has_content = True
                     break
             if has_content:
@@ -553,9 +603,8 @@ class ImageUploader:
                         if x2 - dx >= 0 and y2 - dy >= 0:
                             framed_pixels[x2 - dx, y2 - dy] = bg_color
 
-        # Now draw the border
+        # Now draw the border (frame_color already set correctly above)
         draw = ImageDraw.Draw(framed)
-        frame_color = 0 if bg_color == 255 else 255
 
         if frame_style == 'line':
             # Simple rectangular border
@@ -652,7 +701,21 @@ class ImageUploader:
                 logger.error(f"✗ Image too large: {size_mb:.2f}MB (max 5MB)")
                 return False
 
-            logger.info(f"  Sending {len(image_data) / 1024:.1f}KB {content_type.split('/')[-1].upper()} to TRMNL")
+            # Log detailed image information
+            logger.info(f"  Upload Details:")
+            logger.info(f"    - Format: {content_type}")
+            logger.info(f"    - Size: {len(image_data) / 1024:.1f}KB ({len(image_data)} bytes)")
+            logger.info(f"    - Dimensions: {self.display_width}x{self.display_height}")
+            logger.info(f"    - Output Mode: {self.output_mode}")
+
+            # Verify it's actually a PNG by checking magic bytes
+            if image_data[:8] == b'\x89PNG\r\n\x1a\n':
+                logger.info(f"    - Verified: Valid PNG file signature")
+            else:
+                logger.warning(f"    - Warning: File signature does not match PNG format!")
+                logger.warning(f"    - First 8 bytes: {image_data[:8].hex()}")
+
+            logger.info(f"  Sending to: {self.webhook_url}")
 
             # Upload to TRMNL
             response = requests.post(
@@ -745,6 +808,7 @@ def main():
     layout = os.getenv('LAYOUT', 'auto').lower()
     orientation_filter = os.getenv('ORIENTATION_FILTER', 'any').lower()
     gamma = float(os.getenv('GAMMA', '1.5'))
+    output_mode = os.getenv('OUTPUT_MODE', 'grayscale').lower()
 
     # Validate configuration
     if not webhook_url:
@@ -778,6 +842,13 @@ def main():
         logger.error(f"Valid filters: {', '.join(valid_filters)}")
         exit(1)
 
+    # Validate output mode
+    valid_output_modes = ['grayscale', 'color']
+    if output_mode not in valid_output_modes:
+        logger.error(f"Invalid OUTPUT_MODE: {output_mode}")
+        logger.error(f"Valid modes: {', '.join(valid_output_modes)}")
+        exit(1)
+
     # Create and run uploader
     uploader = ImageUploader(
         webhook_url=webhook_url,
@@ -789,7 +860,8 @@ def main():
         display_height=display_height,
         layout=layout,
         orientation_filter=orientation_filter,
-        gamma=gamma
+        gamma=gamma,
+        output_mode=output_mode
     )
 
     uploader.run()
