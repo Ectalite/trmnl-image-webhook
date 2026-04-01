@@ -94,7 +94,8 @@ class ImageUploader:
                  gamma: float = 1.5,
                  output_mode: str = 'grayscale',
                  image_fit: str = 'contain',
-                 bit_depth: int = 1):
+                 bit_depth: int = 1,
+                 mime_type: str = 'image/png'):
         self.webhook_url = webhook_url
         self.images_dir = Path(images_dir)
         self.interval_seconds = interval_minutes * 60
@@ -106,6 +107,7 @@ class ImageUploader:
         self.output_mode = output_mode
         self.image_fit = image_fit
         self.bit_depth = bit_depth
+        self.mime_type = mime_type
 
         # Adjust dimensions based on layout
         if layout == 'portrait':
@@ -434,12 +436,14 @@ class ImageUploader:
                     bit_depth = self.bit_depth
                     use_dither = os.getenv('USE_DITHERING', 'true').lower() == 'true'
 
-                    if use_dither:
+                    if use_dither and bit_depth <= 3:
                         logger.info(f"  Dithering image content (isolation mode)")
                         if bit_depth == 1:
                             img_processed = img_l.convert('1', dither=Image.Dither.FLOYDSTEINBERG).convert('L')
-                        else:
-                            img_processed = self._dither_to_4_levels(img_l)
+                        elif bit_depth == 2:
+                            img_processed = self._dither_to_n_levels(img_l, 4)
+                        else:  # bit_depth == 3
+                            img_processed = self._dither_to_n_levels(img_l, 8)
                     else:
                         img_processed = img_l
 
@@ -464,13 +468,18 @@ class ImageUploader:
                         canvas = self._add_frame_border(canvas, margin)
 
                     # 7. Generate final bytes
+                    output = io.BytesIO()
                     if bit_depth == 1:
-                        final_output = canvas.convert('1', dither=Image.Dither.NONE)
-                        output = io.BytesIO()
-                        final_output.save(output, format='PNG', optimize=True)
-                        image_bytes = output.getvalue()
+                        canvas.convert('1', dither=Image.Dither.NONE).save(output, format='PNG', optimize=True)
+                    elif bit_depth == 2:
+                        return self._save_nbit_png(canvas, 2), 'image/png'
+                    elif bit_depth == 3:
+                        return self._save_nbit_png(canvas, 4), 'image/png'
+                    elif self.mime_type == 'image/webp':
+                        canvas.save(output, format='WEBP', quality=90)
                     else:
-                        image_bytes = self._save_2bit_png(canvas)
+                        canvas.save(output, format='PNG', optimize=True, compress_level=9)
+                    image_bytes = output.getvalue()
 
                 # Save debug images
                 for old_file in Path('/data').glob('last_original.*'):
@@ -488,31 +497,39 @@ class ImageUploader:
 
                 logger.info(f"  Saved debug images to /data/")
 
-                return image_bytes, 'image/png'
+                return image_bytes, self.mime_type
 
         except Exception as e:
             logger.error(f"Error processing image: {e}")
             with open(image_path, 'rb') as f:
                 return f.read(), 'image/jpeg'
 
-    def _dither_to_4_levels(self, img: Image.Image) -> Image.Image:
+    def _dither_to_n_levels(self, img: Image.Image, levels: int) -> Image.Image:
         """
-        Apply Floyd-Steinberg dithering to 4 gray levels with a
+        Apply Floyd-Steinberg dithering to N gray levels with a
         threshold to protect solid backgrounds/margins.
         """
         if img.mode != 'L':
             img = img.convert('L')
 
+        level_values = [round(i * 255 / (levels - 1)) for i in range(levels)]
+        boundaries = [(level_values[i] + level_values[i + 1]) // 2 for i in range(levels - 1)]
+
+        def nearest_level(pixel):
+            for i, boundary in enumerate(boundaries):
+                if pixel < boundary:
+                    return level_values[i]
+            return level_values[-1]
+
         width, height = img.size
-        pixels = list(img.getdata())
+        pixels = list(img.get_flattened_data())
         img_array = [list(pixels[i * width:(i + 1) * width]) for i in range(height)]
 
         for y in range(height):
             for x in range(width):
                 old_pixel = img_array[y][x]
 
-                # THRESHOLD FIX: If pixel is nearly white or black,
-                # snap it to pure and skip error distribution.
+                # Snap pure white/black to avoid error bleeding into margins
                 if old_pixel >= 254:
                     img_array[y][x] = 255
                     continue
@@ -520,20 +537,10 @@ class ImageUploader:
                     img_array[y][x] = 0
                     continue
 
-                # Find nearest level (0, 85, 170, 255)
-                if old_pixel < 43:
-                    new_pixel = 0
-                elif old_pixel < 128:
-                    new_pixel = 85
-                elif old_pixel < 213:
-                    new_pixel = 170
-                else:
-                    new_pixel = 255
-
+                new_pixel = nearest_level(old_pixel)
                 img_array[y][x] = new_pixel
                 error = old_pixel - new_pixel
 
-                # Distribute error to neighboring pixels
                 if x + 1 < width:
                     img_array[y][x + 1] = max(0, min(255, img_array[y][x + 1] + error * 7 // 16))
                 if y + 1 < height:
@@ -688,54 +695,31 @@ class ImageUploader:
         logger.info(f"  Added {frame_style} frame border ({frame_width}px) at image edges")
         return framed
 
-    def _save_2bit_png(self, img: Image.Image) -> bytes:
+    def _save_nbit_png(self, img: Image.Image, bitdepth: int) -> bytes:
         """
-        Save grayscale image as 2-bit PNG using pypng.
-
-        Quantizes to 4 gray levels: 0 (black), 85 (dark), 170 (light), 255 (white)
-        Creates native 2-bit grayscale PNG (color type 0, bit depth 2)
+        Save grayscale image as N-bit PNG using pypng.
+        bitdepth must be a valid PNG grayscale bit depth: 1, 2, 4, 8, or 16.
         """
         try:
             import png
         except ImportError:
-            raise ImportError("pypng required for 2-bit PNG support. Run: pip install pypng")
+            raise ImportError("pypng required for low bit-depth PNG support. Run: pip install pypng")
 
-        # Convert to grayscale if needed
         if img.mode != 'L':
             img = img.convert('L')
 
+        max_val = (1 << bitdepth) - 1
         width, height = img.size
-        pixels = list(img.getdata())
+        pixels = list(img.get_flattened_data())
 
-        # Quantize to 4 levels (0, 1, 2, 3)
         rows = []
         for y in range(height):
-            row = []
-            for x in range(width):
-                pixel = pixels[y * width + x]
-                # Map 0-255 to 0-3
-                if pixel < 64:
-                    value = 0  # Black
-                elif pixel < 128:
-                    value = 1  # Dark gray
-                elif pixel < 192:
-                    value = 2  # Light gray
-                else:
-                    value = 3  # White
-                row.append(value)
+            row = [round(pixels[y * width + x] * max_val / 255) for x in range(width)]
             rows.append(row)
 
-        # Write 2-bit grayscale PNG with maximum compression
         output = io.BytesIO()
-        writer = png.Writer(
-            width=width,
-            height=height,
-            greyscale=True,
-            bitdepth=2,
-            compression=9  # Maximum compression to stay under TRMNL's ~50KB limit
-        )
+        writer = png.Writer(width=width, height=height, greyscale=True, bitdepth=bitdepth, compression=9)
         writer.write(output, rows)
-
         return output.getvalue()
 
     def upload_image(self, image_path: Path) -> bool:
@@ -874,6 +858,7 @@ def main():
     bit_depth = int(os.getenv('BIT_DEPTH', '1'))
     display_width = int(os.getenv('DISPLAY_WIDTH', '800'))
     display_height = int(os.getenv('DISPLAY_HEIGHT', '480'))
+    mime_type = 'image/png'
 
     if device_model_name:
         model = fetch_device_model(device_model_name)
@@ -881,7 +866,8 @@ def main():
             display_width = int(os.getenv('DISPLAY_WIDTH', str(model['width'])))
             display_height = int(os.getenv('DISPLAY_HEIGHT', str(model['height'])))
             bit_depth = int(os.getenv('BIT_DEPTH', str(model['bit_depth'])))
-            logger.info(f"Device model '{device_model_name}': {model['width']}x{model['height']}, {model['bit_depth']}-bit ({model['colors']} colors)")
+            mime_type = model.get('mime_type', 'image/png')
+            logger.info(f"Device model '{device_model_name}': {model['width']}x{model['height']}, {model['bit_depth']}-bit ({model['colors']} colors), {mime_type}")
         else:
             exit(1)
 
@@ -945,7 +931,8 @@ def main():
         gamma=gamma,
         output_mode=output_mode,
         image_fit=image_fit,
-        bit_depth=bit_depth
+        bit_depth=bit_depth,
+        mime_type=mime_type
     )
 
     uploader.run()
