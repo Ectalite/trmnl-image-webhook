@@ -725,7 +725,7 @@ class ImageUploader:
     def upload_image(self, image_path: Path) -> bool:
         """Upload image to TRMNL webhook (or skip if dry run)"""
         try:
-            logger.info(f"Uploading: {image_path.name}")
+            logger.info(f"Uploading: {image_path}")
 
             # Process image for optimal display
             image_data, content_type = self.process_image(image_path)
@@ -734,7 +734,7 @@ class ImageUploader:
             dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
 
             if dry_run:
-                logger.info(f"✓ DRY RUN: Skipped upload of {image_path.name}")
+                logger.info(f"✓ DRY RUN: Skipped upload of {image_path}")
                 logger.info(f"  Would upload: {len(image_data) / 1024:.1f}KB {content_type}")
                 logger.info(f"  Check /data/last_processed.png to see result")
                 return True
@@ -771,7 +771,7 @@ class ImageUploader:
 
             # Check response
             if response.status_code == 200:
-                logger.info(f"✓ Successfully uploaded {image_path.name}")
+                logger.info(f"✓ Successfully uploaded {image_path}")
                 logger.info(f"  Response: {response.status_code}")
             elif response.status_code == 422:
                 logger.error(f"✗ Upload rejected (422): Image format or size invalid")
