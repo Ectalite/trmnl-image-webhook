@@ -75,9 +75,10 @@ That's it! Your TRMNL will start showing photos from your collection.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BIT_DEPTH` | `2` | Bit depth: 1 = black/white, 2 = 4 grays (recommended) |
-| `DISPLAY_WIDTH` | `800` | Display width (OG: 800) |
-| `DISPLAY_HEIGHT` | `480` | Display height (OG: 480) |
+| `DEVICE_MODEL` | _(none)_ | Auto-configure from TRMNL API: `og_png`, `v2`, `amazon_kindle_2024`, etc. Sets width, height, and bit depth automatically |
+| `BIT_DEPTH` | `1` | Bit depth: 1 = black/white, 2 = 4 grays. Overrides `DEVICE_MODEL` if set |
+| `DISPLAY_WIDTH` | `800` | Display width in pixels. Overrides `DEVICE_MODEL` if set |
+| `DISPLAY_HEIGHT` | `480` | Display height in pixels. Overrides `DEVICE_MODEL` if set |
 | `LAYOUT` | `auto` | Orientation: auto/landscape/portrait |
 | `ORIENTATION_FILTER` | `any` | Filter images: any/landscape/portrait |
 | `BORDER_STYLE` | `white` | Border style: white/black/blur |

@@ -38,6 +38,23 @@ def get_version():
 
 CURRENT_VERSION = get_version()
 VERSION_CHECK_URL = "https://api.github.com/repos/ExcuseMi/trmnl-image-webhook/releases/latest"
+TRMNL_MODELS_URL = "https://trmnl.com/api/models"
+
+
+def fetch_device_model(model_name: str) -> Optional[dict]:
+    """Fetch device model capabilities from TRMNL API"""
+    try:
+        response = requests.get(TRMNL_MODELS_URL, headers={'accept': 'application/json'}, timeout=5)
+        if response.status_code == 200:
+            models = response.json().get('data', [])
+            for model in models:
+                if model.get('name') == model_name:
+                    return model
+            available = [m.get('name') for m in models]
+            logger.error(f"Unknown DEVICE_MODEL '{model_name}'. Available: {available}")
+    except Exception as e:
+        logger.warning(f"Could not fetch device models: {e}")
+    return None
 
 
 def check_for_updates():
@@ -76,7 +93,8 @@ class ImageUploader:
                  orientation_filter: str = 'any',
                  gamma: float = 1.5,
                  output_mode: str = 'grayscale',
-                 image_fit: str = 'contain'):
+                 image_fit: str = 'contain',
+                 bit_depth: int = 1):
         self.webhook_url = webhook_url
         self.images_dir = Path(images_dir)
         self.interval_seconds = interval_minutes * 60
@@ -87,6 +105,7 @@ class ImageUploader:
         self.gamma = gamma
         self.output_mode = output_mode
         self.image_fit = image_fit
+        self.bit_depth = bit_depth
 
         # Adjust dimensions based on layout
         if layout == 'portrait':
@@ -112,6 +131,7 @@ class ImageUploader:
         logger.info(f"  Upload interval: {interval_minutes} minutes")
         logger.info(f"  Selection mode: {selection_mode}")
         logger.info(f"  Include subfolders: {include_subfolders}")
+        logger.info(f"  Bit depth: {bit_depth}")
 
     def _load_state(self) -> dict:
         """Load state from file or create new state"""
@@ -411,7 +431,7 @@ class ImageUploader:
                         img_l = img_l.point(lut)
                         logger.info(f"  Applied gamma correction: {self.gamma}")
 
-                    bit_depth = int(os.getenv('BIT_DEPTH', '2'))
+                    bit_depth = self.bit_depth
                     use_dither = os.getenv('USE_DITHERING', 'true').lower() == 'true'
 
                     if use_dither:
@@ -843,13 +863,27 @@ def main():
     interval_minutes = int(os.getenv('INTERVAL_MINUTES', '60'))
     selection_mode = os.getenv('SELECTION_MODE', 'random').lower()
     include_subfolders = os.getenv('INCLUDE_SUBFOLDERS', 'true').lower() == 'true'
-    display_width = int(os.getenv('DISPLAY_WIDTH', '800'))
-    display_height = int(os.getenv('DISPLAY_HEIGHT', '480'))
     layout = os.getenv('LAYOUT', 'auto').lower()
     orientation_filter = os.getenv('ORIENTATION_FILTER', 'any').lower()
     gamma = float(os.getenv('GAMMA', '1.5'))
     output_mode = os.getenv('OUTPUT_MODE', 'grayscale').lower()
     image_fit = os.getenv('IMAGE_FIT', 'contain').lower()
+
+    # Fetch device model capabilities if DEVICE_MODEL is set
+    device_model_name = os.getenv('DEVICE_MODEL')
+    bit_depth = int(os.getenv('BIT_DEPTH', '1'))
+    display_width = int(os.getenv('DISPLAY_WIDTH', '800'))
+    display_height = int(os.getenv('DISPLAY_HEIGHT', '480'))
+
+    if device_model_name:
+        model = fetch_device_model(device_model_name)
+        if model:
+            display_width = int(os.getenv('DISPLAY_WIDTH', str(model['width'])))
+            display_height = int(os.getenv('DISPLAY_HEIGHT', str(model['height'])))
+            bit_depth = int(os.getenv('BIT_DEPTH', str(model['bit_depth'])))
+            logger.info(f"Device model '{device_model_name}': {model['width']}x{model['height']}, {model['bit_depth']}-bit ({model['colors']} colors)")
+        else:
+            exit(1)
 
     # Validate configuration
     if not webhook_url:
@@ -910,7 +944,8 @@ def main():
         orientation_filter=orientation_filter,
         gamma=gamma,
         output_mode=output_mode,
-        image_fit=image_fit
+        image_fit=image_fit,
+        bit_depth=bit_depth
     )
 
     uploader.run()
