@@ -1,6 +1,6 @@
 # TRMNL Image Webhook
 
-Automatically upload images from your photo collection to your TRMNL e-ink display with proper dithering for beautiful grayscale rendering.
+Automatically upload images from your photo collection to your TRMNL e-ink display with proper dithering and color support.
 ## Example output
 ![beach-2bit-dither-800x480.png](example_images/beach-2bit-dither-800x480.png) 
 
@@ -11,7 +11,8 @@ Automatically upload images from your photo collection to your TRMNL e-ink displ
 - 🖼️ **2-bit Grayscale** - 4 shades of gray for better quality than pure black & white
 - ✨ **Gamma Correction** - Brightens midtones for better e-ink visibility
 - 🖼️ **Frame Borders** - Optional decorative borders (line or rounded corners)
-- 🎨 **Color Output Mode** - Full RGB for Pimoroni Inky or similar color e-ink displays
+- 🎨 **Color Output Mode** - Full RGB for color e-ink displays (auto-selected for 24-bit devices)
+- 🔴 **BWRY Output Mode** - 4-color palette (black/white/red/yellow) for BWRY e-ink displays (auto-selected for `og_bwry`, `waveshare_7_5_bwry`, etc.)
 - 🎲 **Multiple Selection Modes** - Random, sequential, shuffle, newest, or oldest
 - 🔄 **Auto-Rotation** - Respects EXIF orientation data
 - 🖼️ **Flexible Layouts** - Auto, landscape, or portrait modes
@@ -30,7 +31,7 @@ Automatically upload images from your photo collection to your TRMNL e-ink displ
 
 ### 1. Get Your Webhook URL
 
-1. Log into [TRMNL](https://usetrmnl.com)
+1. Log into [TRMNL](https://trmnl.com)
 2. Go to Plugins > Webhook Image
 3. Click "Add to my plugins"
 4. Copy your webhook URL
@@ -50,7 +51,7 @@ nano .env
 
 Minimum required config:
 ```bash
-WEBHOOK_URL=https://usetrmnl.com/api/plugin_settings/YOUR-UUID/image
+WEBHOOK_URL=https://trmnl.com/api/plugin_settings/YOUR-UUID/image
 IMAGES_PATH=/path/to/your/photos
 ```
 
@@ -66,9 +67,9 @@ That's it! Your TRMNL will start showing photos from your collection.
 
 ### Required Settings
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `WEBHOOK_URL` | Your TRMNL webhook URL | `https://usetrmnl.com/api/...` |
+| Variable | Description | Example                           |
+|----------|-------------|-----------------------------------|
+| `WEBHOOK_URL` | Your TRMNL webhook URL | `https://trmnl.com/api/...`       |
 | `IMAGES_PATH` | Path to your photos | `./images` or `/home/user/Photos` |
 
 ### Optional Settings
@@ -76,9 +77,6 @@ That's it! Your TRMNL will start showing photos from your collection.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEVICE_MODEL` | _(none)_ | Auto-configure from TRMNL API: `og_png`, `v2`, `amazon_kindle_2024`, etc. Sets width, height, and bit depth automatically |
-| `BIT_DEPTH` | `1` | Bit depth: 1 = black/white, 2 = 4 grays. Overrides `DEVICE_MODEL` if set |
-| `DISPLAY_WIDTH` | `800` | Display width in pixels. Overrides `DEVICE_MODEL` if set |
-| `DISPLAY_HEIGHT` | `480` | Display height in pixels. Overrides `DEVICE_MODEL` if set |
 | `LAYOUT` | `auto` | Orientation: auto/landscape/portrait |
 | `ORIENTATION_FILTER` | `any` | Filter images: any/landscape/portrait |
 | `BORDER_STYLE` | `white` | Border style: white/black/blur |
@@ -86,7 +84,7 @@ That's it! Your TRMNL will start showing photos from your collection.
 | `GAMMA` | `1.5` | Gamma correction (1.0-2.0, brightens midtones for e-ink) |
 | `FRAME_BORDER` | `none` | Frame border: none/line/rounded (only with MARGIN > 0) |
 | `FRAME_BORDER_WIDTH` | `2` | Frame border width in pixels (1-10) |
-| `OUTPUT_MODE` | `grayscale` | Output: grayscale (TRMNL) or color (Pimoroni Inky) |
+| `OUTPUT_MODE` | _(auto)_ | Output mode: `grayscale`, `color` (24-bit devices), or `bwry` (BWRY devices). Auto-selected when `DEVICE_MODEL` is set |
 | `INTERVAL_MINUTES` | `60` | Minutes between uploads |
 | `SELECTION_MODE` | `random` | How to pick images (see below) |
 | `INCLUDE_SUBFOLDERS` | `true` | Include images from subdirectories |
@@ -141,16 +139,23 @@ BORDER_STYLE=white     # Background: white/black
 - **Modern**: `MARGIN=30`, `FRAME_BORDER=rounded`, `BORDER_STYLE=white`
 - **Classic**: `MARGIN=50`, `FRAME_BORDER=line`, `FRAME_BORDER_WIDTH=5`
 
-### Color Output Mode
+### Output Modes
 
-For Pimoroni Inky or other color e-ink displays. Outputs full RGB instead of dithered grayscale.
+When `DEVICE_MODEL` is set, the output mode is chosen automatically. You can override with `OUTPUT_MODE`.
+
+**grayscale** (default) — Floyd-Steinberg dithered grayscale. Best for standard TRMNL e-ink displays.
+
+**color** — Full RGB, no dithering. Auto-selected for 24-bit devices (tidbyt, openframe, raspberry_pi_touch_2). Produces larger files (~200-500KB).
 
 ```bash
-OUTPUT_MODE=color                              # Enable color mode
-WEBHOOK_URL=http://192.168.1.x:5000/display  # Your local endpoint
+OUTPUT_MODE=color
 ```
 
-**Note:** Color mode produces larger files (200-500KB) and is not compatible with TRMNL's cloud service. Use for local Pimoroni Inky setups only.
+**bwry** — 4-color palette: black, white, red, yellow. Floyd-Steinberg dithered in RGB space. Auto-selected for BWRY devices (`og_bwry`, `waveshare_7_5_bwry`).
+
+```bash
+OUTPUT_MODE=bwry
+```
 
 ### Image Fit Modes
 
@@ -212,7 +217,7 @@ TRMNL displays are 1-bit (pure black and white). Dithering creates the illusion 
 
 ```bash
 # .env
-WEBHOOK_URL=https://usetrmnl.com/api/plugin_settings/abc-123/image
+WEBHOOK_URL=https://trmnl.com/api/plugin_settings/abc-123/image
 IMAGES_PATH=/home/user/Photos
 INTERVAL_MINUTES=60
 SELECTION_MODE=random
@@ -263,16 +268,19 @@ FRAME_BORDER=rounded
 FRAME_BORDER_WIDTH=2
 ```
 
-### Pimoroni Inky Color Display
+### Color Display (Pimoroni Inky / openframe)
 
 ```bash
-OUTPUT_MODE=color
-DISPLAY_WIDTH=800
-DISPLAY_HEIGHT=480
-GAMMA=1.5
-MARGIN=30
-FRAME_BORDER=line
-WEBHOOK_URL=http://192.168.1.x:5000/display  # Your local Pi endpoint
+DEVICE_MODEL=openframe   # auto-selects OUTPUT_MODE=color
+GAMMA=1.0
+WEBHOOK_URL=http://192.168.1.x:5000/display
+```
+
+### BWRY Display (TRMNL OG BWRY / Waveshare)
+
+```bash
+DEVICE_MODEL=og_bwry     # auto-selects OUTPUT_MODE=bwry
+GAMMA=1.2
 ```
 
 ## Deployment
@@ -405,14 +413,20 @@ Both modes use Floyd-Steinberg dithering for professional halftone effects.
 - Output: ~15-40KB (1-bit PNG)
 - Limit: 5MB (rarely reached)
 
-### Display Sizes
+### Device Models
 
-**TRMNL OG:**
-```bash
-DISPLAY_WIDTH=800
-DISPLAY_HEIGHT=480
-```
+Set `DEVICE_MODEL` to auto-configure display dimensions, bit depth, and output mode. 41 devices supported — run `python generate_examples.py` to render a sample image for every model.
 
+Common models:
+
+| Model | Size | Output |
+|-------|------|--------|
+| `og_png` | 800×480 | grayscale 1-bit |
+| `og_plus` | 800×480 | grayscale 2-bit |
+| `og_bwry` | 800×480 | bwry (auto) |
+| `v2` | 1872×1404 | grayscale 4-bit |
+| `openframe` | 800×480 | color (auto) |
+| `tidbyt` | 64×32 | color (auto) |
 
 ### State Management
 

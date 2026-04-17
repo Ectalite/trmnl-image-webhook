@@ -12,7 +12,7 @@ import pathlib
 import pytest
 from PIL import Image
 from unittest.mock import patch, MagicMock
-from app import ImageUploader
+from app import ImageUploader, BWRY_PALETTE
 
 
 # All devices from GET https://trmnl.com/api/models
@@ -22,7 +22,7 @@ DEVICE_MODELS = [
     {"name": "amazon_kindle_2024",               "width": 1400, "height": 840,  "bit_depth": 8,  "colors": 256,      "mime_type": "image/png"},
     {"name": "amazon_kindle_paperwhite_6th_gen", "width": 1024, "height": 768,  "bit_depth": 8,  "colors": 256,      "mime_type": "image/png"},
     {"name": "amazon_kindle_paperwhite_7th_gen", "width": 1448, "height": 1072, "bit_depth": 8,  "colors": 256,      "mime_type": "image/png"},
-    {"name": "inkplate_10",                      "width": 1200, "height": 820,  "bit_depth": 3,  "colors": 8,        "mime_type": "image/png"},
+    {"name": "inkplate_10",                      "width": 1200, "height": 825,  "bit_depth": 3,  "colors": 8,        "mime_type": "image/png"},
     {"name": "amazon_kindle_7",                  "width": 800,  "height": 600,  "bit_depth": 8,  "colors": 256,      "mime_type": "image/png"},
     {"name": "inky_impression_7_3",              "width": 800,  "height": 480,  "bit_depth": 1,  "colors": 2,        "mime_type": "image/png"},
     {"name": "kobo_libra_2",                     "width": 1680, "height": 1264, "bit_depth": 8,  "colors": 256,      "mime_type": "image/png"},
@@ -53,6 +53,11 @@ DEVICE_MODELS = [
     {"name": "inkplate_5_2",                     "width": 1280, "height": 720,  "bit_depth": 4,  "colors": 16,       "mime_type": "image/png"},
     {"name": "raspberry_pi_touch_2",             "width": 1280, "height": 720,  "bit_depth": 24, "colors": 16777216, "mime_type": "image/png"},
     {"name": "ed133ut2",                         "width": 1600, "height": 1200, "bit_depth": 4,  "colors": 16,       "mime_type": "image/png"},
+    {"name": "avalue_epd_42s",                   "width": 2880, "height": 2160, "bit_depth": 4,  "colors": 16,       "mime_type": "image/png"},
+    {"name": "kobo_touch",                       "width": 800,  "height": 600,  "bit_depth": 4,  "colors": 16,       "mime_type": "image/png"},
+    {"name": "kobo_forma",                       "width": 1920, "height": 1440, "bit_depth": 4,  "colors": 16,       "mime_type": "image/png"},
+    {"name": "openframe",                        "width": 800,  "height": 480,  "bit_depth": 24, "colors": 16777216, "mime_type": "image/webp"},
+    {"name": "amazon_kindle_paperwhite_signature_11th_gen", "width": 1648, "height": 1236, "bit_depth": 4, "colors": 16, "mime_type": "image/png"},
 ]
 
 _real_open = builtins.open
@@ -110,3 +115,62 @@ def test_dimensions(model, tmp_path):
     assert result.size == (model["width"], model["height"])
 
 
+BWRY_MODELS = [m for m in DEVICE_MODELS if "bwry" in m["name"]]
+
+
+def make_bwry_uploader(model: dict) -> ImageUploader:
+    return ImageUploader(
+        webhook_url="http://fake",
+        images_dir="/tmp",
+        interval_minutes=60,
+        display_width=model["width"],
+        display_height=model["height"],
+        bit_depth=model["bit_depth"],
+        mime_type=model["mime_type"],
+        output_mode="bwry",
+    )
+
+
+def make_color_test_image(tmp_path) -> pathlib.Path:
+    """Colorful test image with red, yellow, black, white, and blended regions."""
+    img = Image.new("RGB", (200, 200))
+    pixels = img.load()
+    for y in range(200):
+        for x in range(200):
+            if x < 50:
+                pixels[x, y] = (255, 0, 0)      # red
+            elif x < 100:
+                pixels[x, y] = (255, 255, 0)    # yellow
+            elif x < 150:
+                pixels[x, y] = (0, 0, 0)        # black
+            else:
+                pixels[x, y] = (255, 255, 255)  # white
+    path = tmp_path / "color_test.png"
+    img.save(path, format="PNG")
+    return path
+
+
+@pytest.mark.parametrize("model", BWRY_MODELS, ids=[m["name"] for m in BWRY_MODELS])
+def test_bwry_is_palette_png(model, tmp_path):
+    uploader = make_bwry_uploader(model)
+    img_path = make_color_test_image(tmp_path)
+    with patch("builtins.open", side_effect=_open_no_data), \
+         patch("pathlib.Path.glob", return_value=[]):
+        image_bytes, content_type = uploader.process_image(img_path)
+    result = Image.open(io.BytesIO(image_bytes))
+    assert content_type == "image/png"
+    assert result.mode == "P"
+    assert result.size == (model["width"], model["height"])
+
+
+@pytest.mark.parametrize("model", BWRY_MODELS, ids=[m["name"] for m in BWRY_MODELS])
+def test_bwry_only_palette_colors(model, tmp_path):
+    uploader = make_bwry_uploader(model)
+    img_path = make_color_test_image(tmp_path)
+    with patch("builtins.open", side_effect=_open_no_data), \
+         patch("pathlib.Path.glob", return_value=[]):
+        image_bytes, _ = uploader.process_image(img_path)
+    result = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    used_colors = set(result.get_flattened_data())
+    allowed = set(BWRY_PALETTE)
+    assert used_colors <= allowed, f"Unexpected colors: {used_colors - allowed}"

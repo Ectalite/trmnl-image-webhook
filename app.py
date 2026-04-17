@@ -40,6 +40,8 @@ CURRENT_VERSION = get_version()
 VERSION_CHECK_URL = "https://api.github.com/repos/ExcuseMi/trmnl-image-webhook/releases/latest"
 TRMNL_MODELS_URL = "https://trmnl.com/api/models"
 
+BWRY_PALETTE = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (255, 255, 0)]
+
 
 def fetch_device_model(model_name: str) -> Optional[dict]:
     """Fetch device model capabilities from TRMNL API"""
@@ -423,6 +425,35 @@ class ImageUploader:
                     canvas.save(output, format='PNG', optimize=True, compress_level=9)
                     image_bytes = output.getvalue()
 
+                elif self.output_mode == 'bwry':
+                    # BWRY MODE: 4-color palette (black/white/red/yellow)
+                    logger.info("Processing in BWRY mode (black/white/red/yellow)")
+
+                    if self.gamma != 1.0:
+                        lut = [int(pow(i / 255.0, 1.0 / self.gamma) * 255.0) for i in range(256)]
+                        img_resized = img_resized.point(lambda x: lut[x])
+                        logger.info(f"  Applied gamma correction: {self.gamma}")
+
+                    img_dithered = self._dither_to_bwry(img_resized)
+
+                    border_style = os.getenv('BORDER_STYLE', 'white').lower()
+                    bg_idx = 0 if border_style == 'black' else 1  # 0=black, 1=white in BWRY_PALETTE
+                    canvas = Image.new('P', (self.display_width, self.display_height), bg_idx)
+                    flat_palette = [v for c in BWRY_PALETTE for v in c] + [0] * (256 - len(BWRY_PALETTE)) * 3
+                    canvas.putpalette(flat_palette)
+
+                    if self.image_fit == 'fill':
+                        x_offset = margin
+                        y_offset = margin
+                    else:
+                        x_offset = (self.display_width - img_dithered.width) // 2
+                        y_offset = (self.display_height - img_dithered.height) // 2
+                    canvas.paste(img_dithered, (x_offset, y_offset))
+
+                    output = io.BytesIO()
+                    canvas.save(output, format='PNG', optimize=True)
+                    image_bytes = output.getvalue()
+
                 else:
                     # GRAYSCALE MODE: Original dithering pipeline
                     img_l = img_resized.convert('L')
@@ -554,6 +585,44 @@ class ImageUploader:
         dithered = Image.new('L', (width, height))
         dithered.putdata(flat_pixels)
         return dithered
+
+    def _dither_to_bwry(self, img: Image.Image) -> Image.Image:
+        """Floyd-Steinberg dither to 4-color BWRY palette. Returns a 'P' mode image."""
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        width, height = img.size
+        pixels = list(img.get_flattened_data())
+        arr = [[list(pixels[y * width + x]) for x in range(width)] for y in range(height)]
+
+        def nearest(r, g, b):
+            best_idx, best_dist = 0, float('inf')
+            for i, (pr, pg, pb) in enumerate(BWRY_PALETTE):
+                d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+                if d < best_dist:
+                    best_dist, best_idx = d, i
+            return best_idx
+
+        indices = [[0] * width for _ in range(height)]
+        for y in range(height):
+            for x in range(width):
+                old = arr[y][x]
+                idx = nearest(*old)
+                indices[y][x] = idx
+                nr, ng, nb = BWRY_PALETTE[idx]
+                er, eg, eb = old[0] - nr, old[1] - ng, old[2] - nb
+                for dy, dx, w in ((0, 1, 7), (1, -1, 3), (1, 0, 5), (1, 1, 1)):
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < height and 0 <= nx < width:
+                        arr[ny][nx][0] = max(0, min(255, arr[ny][nx][0] + er * w // 16))
+                        arr[ny][nx][1] = max(0, min(255, arr[ny][nx][1] + eg * w // 16))
+                        arr[ny][nx][2] = max(0, min(255, arr[ny][nx][2] + eb * w // 16))
+
+        out = Image.new('P', (width, height))
+        flat_palette = [v for c in BWRY_PALETTE for v in c] + [0] * (256 - len(BWRY_PALETTE)) * 3
+        out.putpalette(flat_palette)
+        out.putdata([indices[y][x] for y in range(height) for x in range(width)])
+        return out
 
     def _add_frame_border(self, img: Image.Image, margin: int) -> Image.Image:
         """
@@ -868,6 +937,13 @@ def main():
             bit_depth = int(os.getenv('BIT_DEPTH', str(model['bit_depth'])))
             mime_type = model.get('mime_type', 'image/png')
             logger.info(f"Device model '{device_model_name}': {model['width']}x{model['height']}, {model['bit_depth']}-bit ({model['colors']} colors), {mime_type}")
+            if 'OUTPUT_MODE' not in os.environ:
+                if model['bit_depth'] == 24:
+                    output_mode = 'color'
+                    logger.info(f"Auto-selected OUTPUT_MODE=color for 24-bit device")
+                elif 'bwry' in device_model_name:
+                    output_mode = 'bwry'
+                    logger.info(f"Auto-selected OUTPUT_MODE=bwry for BWRY device")
         else:
             exit(1)
 
@@ -904,7 +980,7 @@ def main():
         exit(1)
 
     # Validate output mode
-    valid_output_modes = ['grayscale', 'color']
+    valid_output_modes = ['grayscale', 'color', 'bwry']
     if output_mode not in valid_output_modes:
         logger.error(f"Invalid OUTPUT_MODE: {output_mode}")
         logger.error(f"Valid modes: {', '.join(valid_output_modes)}")
