@@ -80,6 +80,54 @@ def check_for_updates():
         # Silently fail - don't block startup for version check
         pass
 
+# Add a label on top of the image
+def _add_label(canvas, image_path: Path) -> Image.Image:
+    # Load a font
+    try:
+        font = ImageFont.truetype("arial.ttf", 36)
+    except OSError:
+        font = ImageFont.load_default()
+    draw = ImageDraw.Draw(canvas)
+    text=''
+    match os.getenv('IMAGE_LABEL'):
+        case 'filename':
+            text = image_path.name
+        case 'path':
+            text = str(image_path)
+        case 'datename':
+            # Folder name
+            folder = re.sub(r"^\d+\s*", "", image_path.parent.name)
+
+            # Year (from modification time)
+            year = image_path.stat().st_mtime
+            from datetime import datetime
+            year = datetime.fromtimestamp(year).year
+            text = f"{folder} - {year}"
+        case _: # none or other values
+            return canvas
+    # Measure text
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    padding = 10
+    y = canvas.height - th - 2 * padding
+    # Draw a white banner
+    draw.rounded_rectangle(
+        ((canvas.width/2 - tw/2 - padding), y, (canvas.width/2 + tw/2 + padding), canvas.height+10),
+        fill="white",
+        radius=7
+    )
+
+    # Draw the text centered
+    draw.text(
+        ((canvas.width - tw) / 2, y + padding),
+        text,
+        fill="black",
+        font=font,
+    )
+    return canvas
+
 
 class ImageUploader:
     SUPPORTED_FORMATS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.heic'}
@@ -431,7 +479,7 @@ class ImageUploader:
                         canvas = self._add_frame_border(canvas, margin)
 
                     # Add label to image
-                    canvas = self._add_label(canvas, image_path)
+                    canvas = _add_label(canvas, image_path)
 
                     # Save as RGB PNG with maximum compression
                     output = io.BytesIO()
@@ -464,7 +512,7 @@ class ImageUploader:
                     canvas.paste(img_dithered, (x_offset, y_offset))
 
                     # Add label to image
-                    canvas = self._add_label(canvas, image_path)
+                    canvas = _add_label(canvas, image_path)
 
                     output = io.BytesIO()
                     canvas.save(output, format='PNG', optimize=True)
@@ -515,7 +563,7 @@ class ImageUploader:
                         canvas = self._add_frame_border(canvas, margin)
 
                     # Add label to image
-                    canvas = self._add_label(canvas, image_path)
+                    canvas = _add_label(canvas, image_path)
 
                     # 7. Generate final bytes
                     output = io.BytesIO()
@@ -924,51 +972,6 @@ class ImageUploader:
                 logger.error(f"Error in main loop: {e}")
                 time.sleep(60)  # Wait a minute before retrying
 
-    def _add_label(self, canvas, image_path: Path) -> Image.Image:
-        # Load a font
-        try:
-            font = ImageFont.truetype("arial.ttf", 36)
-        except OSError:
-            font = ImageFont.load_default()
-        draw = ImageDraw.Draw(canvas)
-        text=''
-        match os.getenv('IMAGE_LABEL'):
-            case 'filename':
-                text = image_path.name
-            case 'path':
-                text = str(image_path)
-            case 'datename':
-                # Folder name
-                folder = re.sub(r"^\d+\s*", "", image_path.parent.name)
-
-                # Year (from modification time)
-                year = image_path.stat().st_mtime
-                from datetime import datetime
-                year = datetime.fromtimestamp(year).year
-                text = f"{folder} - {year}"
-            case _: # none or other values
-                return canvas
-        # Measure text
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-
-        padding = 10
-        y = canvas.height - th - 2 * padding
-        # Draw a translucent black banner
-        draw.rectangle(
-            (0, y, canvas.width, canvas.height),
-            fill="white"
-        )
-
-        # Draw the text centered
-        draw.text(
-            ((canvas.width - tw) / 2, y + padding),
-            text,
-            fill="black",
-            font=font,
-        )
-        return canvas
 
 def main():
     # Check for updates
