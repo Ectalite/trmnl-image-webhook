@@ -6,6 +6,7 @@ Automatically uploads images from a directory to your TRMNL display
 
 import os
 import io
+import re
 import time
 import json
 import random
@@ -429,6 +430,9 @@ class ImageUploader:
                     if margin > 0:
                         canvas = self._add_frame_border(canvas, margin)
 
+                    # Add label to image
+                    canvas = self._add_label(canvas, image_path)
+
                     # Save as RGB PNG with maximum compression
                     output = io.BytesIO()
                     canvas.save(output, format='PNG', optimize=True, compress_level=9)
@@ -458,6 +462,9 @@ class ImageUploader:
                         x_offset = (self.display_width - img_dithered.width) // 2
                         y_offset = (self.display_height - img_dithered.height) // 2
                     canvas.paste(img_dithered, (x_offset, y_offset))
+
+                    # Add label to image
+                    canvas = self._add_label(canvas, image_path)
 
                     output = io.BytesIO()
                     canvas.save(output, format='PNG', optimize=True)
@@ -506,6 +513,9 @@ class ImageUploader:
                     # 6. Add frame border if requested
                     if margin > 0:
                         canvas = self._add_frame_border(canvas, margin)
+
+                    # Add label to image
+                    canvas = self._add_label(canvas, image_path)
 
                     # 7. Generate final bytes
                     output = io.BytesIO()
@@ -914,6 +924,51 @@ class ImageUploader:
                 logger.error(f"Error in main loop: {e}")
                 time.sleep(60)  # Wait a minute before retrying
 
+    def _add_label(self, canvas, image_path: Path) -> Image.Image:
+        # Load a font
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)
+        except OSError:
+            font = ImageFont.load_default()
+        draw = ImageDraw.Draw(canvas)
+        text=''
+        match os.getenv('IMAGE_LABEL'):
+            case 'filename':
+                text = image_path.name
+            case 'path':
+                text = str(image_path)
+            case 'datename':
+                # Folder name
+                folder = re.sub(r"^\d+\s*", "", image_path.parent.name)
+
+                # Year (from modification time)
+                year = image_path.stat().st_mtime
+                from datetime import datetime
+                year = datetime.fromtimestamp(year).year
+                text = f"{folder} - {year}"
+            case _: # none or other values
+                return canvas
+        # Measure text
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+
+        padding = 10
+        y = canvas.height - th - 2 * padding
+        # Draw a translucent black banner
+        draw.rectangle(
+            (0, y, canvas.width, canvas.height),
+            fill="white"
+        )
+
+        # Draw the text centered
+        draw.text(
+            ((canvas.width - tw) / 2, y + padding),
+            text,
+            fill="black",
+            font=font,
+        )
+        return canvas
 
 def main():
     # Check for updates
