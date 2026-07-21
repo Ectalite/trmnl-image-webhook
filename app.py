@@ -16,6 +16,7 @@ from typing import List, Optional, Tuple
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
+from pillow_heif import register_heif_opener
 
 # Configure logging
 logging.basicConfig(
@@ -80,7 +81,7 @@ def check_for_updates():
 
 
 class ImageUploader:
-    SUPPORTED_FORMATS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif'}
+    SUPPORTED_FORMATS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.heic'}
     EXCLUDED_DIRS = {"@eaDir", "#recycle"} #Remove trash bin and synology index from usable directories
     STATE_FILE = '/state.json'
     ORIENTATION_CACHE_FILE = '/orientation_cache.json'
@@ -511,9 +512,9 @@ class ImageUploader:
                     if bit_depth == 1:
                         canvas.convert('1', dither=Image.Dither.NONE).save(output, format='PNG', optimize=True)
                     elif bit_depth == 2:
-                        return self._save_nbit_png(canvas, 2), 'image/png'
+                        output = self._save_nbit_png(canvas, 2)
                     elif bit_depth == 3:
-                        return self._save_nbit_png(canvas, 4), 'image/png'
+                        output = self._save_nbit_png(canvas, 4)
                     elif self.mime_type == 'image/webp':
                         canvas.save(output, format='WEBP', quality=90)
                     else:
@@ -772,7 +773,7 @@ class ImageUploader:
         logger.info(f"  Added {frame_style} frame border ({frame_width}px) at image edges")
         return framed
 
-    def _save_nbit_png(self, img: Image.Image, bitdepth: int) -> bytes:
+    def _save_nbit_png(self, img: Image.Image, bitdepth: int) -> io.BytesIO:
         """
         Save grayscale image as N-bit PNG using pypng.
         bitdepth must be a valid PNG grayscale bit depth: 1, 2, 4, 8, or 16.
@@ -797,7 +798,7 @@ class ImageUploader:
         output = io.BytesIO()
         writer = png.Writer(width=width, height=height, greyscale=True, bitdepth=bitdepth, compression=9)
         writer.write(output, rows)
-        return output.getvalue()
+        return output
 
     def upload_image(self, image_path: Path) -> bool:
         """Upload image to TRMNL webhook (or skip if dry run)"""
@@ -920,6 +921,9 @@ def main():
 
     # loading variables from .env file
     load_dotenv()
+
+    # Enable .heic file format
+    register_heif_opener()
 
     # Get configuration from environment variables
     webhook_url = os.getenv('WEBHOOK_URL')
