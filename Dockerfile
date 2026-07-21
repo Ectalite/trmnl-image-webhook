@@ -1,15 +1,14 @@
-FROM python:3.14-slim
+FROM python:3.14-alpine
 
-# Install build dependencies for Pillow (needed for ARM builds)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install build dependencies for Pillow and pillow-heif
+RUN apk add --no-cache \
     gcc \
-    libc6-dev \
-    libjpeg62-turbo-dev \
-    zlib1g-dev \
+    musl-dev \
+    jpeg-dev \
+    zlib-dev \
     libheif-dev \
-    build-essential \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    build-base \
+    pkgconf
 
 # Install Python dependencies from requirements.txt
 COPY requirements.txt /tmp/requirements.txt
