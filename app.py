@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -80,12 +81,14 @@ def check_for_updates():
 
 class ImageUploader:
     SUPPORTED_FORMATS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif'}
-    STATE_FILE = '/data/state.json'
-    ORIENTATION_CACHE_FILE = '/data/orientation_cache.json'
+    EXCLUDED_DIRS = {"@eaDir", "#recycle"} #Remove trash bin and synology index from usable directories
+    STATE_FILE = '/state.json'
+    ORIENTATION_CACHE_FILE = '/orientation_cache.json'
 
     def __init__(self,
                  webhook_url: str,
                  images_dir: str,
+                 processed_dir: str,
                  interval_minutes: int,
                  selection_mode: str = 'random',
                  include_subfolders: bool = True,
@@ -100,6 +103,7 @@ class ImageUploader:
                  mime_type: str = 'image/png'):
         self.webhook_url = webhook_url
         self.images_dir = Path(images_dir)
+        self.processed_dir = processed_dir
         self.interval_seconds = interval_minutes * 60
         self.selection_mode = selection_mode
         self.include_subfolders = include_subfolders
@@ -140,8 +144,8 @@ class ImageUploader:
     def _load_state(self) -> dict:
         """Load state from file or create new state"""
         try:
-            if os.path.exists(self.STATE_FILE):
-                with open(self.STATE_FILE, 'r') as f:
+            if os.path.exists(self.processed_dir + self.STATE_FILE):
+                with open(self.processed_dir + self.STATE_FILE, 'r') as f:
                     return json.load(f)
         except Exception as e:
             logger.warning(f"Could not load state file: {e}")
@@ -156,8 +160,8 @@ class ImageUploader:
     def _save_state(self):
         """Save current state to file"""
         try:
-            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
-            with open(self.STATE_FILE, 'w') as f:
+            os.makedirs(os.path.dirname(self.processed_dir + self.STATE_FILE), exist_ok=True)
+            with open(self.processed_dir + self.STATE_FILE, 'w') as f:
                 json.dump(self.state, f, indent=2)
         except Exception as e:
             logger.error(f"Could not save state file: {e}")
@@ -165,8 +169,8 @@ class ImageUploader:
     def _load_orientation_cache(self) -> dict:
         """Load orientation cache from file"""
         try:
-            if os.path.exists(self.ORIENTATION_CACHE_FILE):
-                with open(self.ORIENTATION_CACHE_FILE, 'r') as f:
+            if os.path.exists(self.processed_dir + self.ORIENTATION_CACHE_FILE):
+                with open(self.processed_dir + self.ORIENTATION_CACHE_FILE, 'r') as f:
                     return json.load(f)
         except Exception as e:
             logger.warning(f"Could not load orientation cache: {e}")
@@ -175,8 +179,8 @@ class ImageUploader:
     def _save_orientation_cache(self, cache: dict):
         """Save orientation cache to file"""
         try:
-            os.makedirs(os.path.dirname(self.ORIENTATION_CACHE_FILE), exist_ok=True)
-            with open(self.ORIENTATION_CACHE_FILE, 'w') as f:
+            os.makedirs(os.path.dirname(self.processed_dir + self.ORIENTATION_CACHE_FILE), exist_ok=True)
+            with open(self.processed_dir + self.ORIENTATION_CACHE_FILE, 'w') as f:
                 json.dump(cache, f)
         except Exception as e:
             logger.error(f"Could not save orientation cache: {e}")
@@ -186,13 +190,17 @@ class ImageUploader:
         images = []
 
         if self.include_subfolders:
-            for ext in self.SUPPORTED_FORMATS:
-                images.extend(self.images_dir.rglob(f'*{ext}'))
-                images.extend(self.images_dir.rglob(f'*{ext.upper()}'))
+            for dirpath, dirnames, filenames in self.images_dir.walk():
+                # Don't recurse into these directories
+                dirnames[:] = [d for d in dirnames if d not in self.EXCLUDED_DIRS]
+
+                for filename in filenames:
+                    if Path(filename).suffix.lower() in self.SUPPORTED_FORMATS:
+                        images.append(dirpath / filename)
         else:
-            for ext in self.SUPPORTED_FORMATS:
-                images.extend(self.images_dir.glob(f'*{ext}'))
-                images.extend(self.images_dir.glob(f'*{ext.upper()}'))
+            for path in self.images_dir.iterdir():
+                if path.is_file() and path.suffix.lower() in self.SUPPORTED_FORMATS:
+                    images.append(path)
 
         # Sort for consistent ordering
         images = sorted(images)
@@ -513,20 +521,20 @@ class ImageUploader:
                     image_bytes = output.getvalue()
 
                 # Save debug images
-                for old_file in Path('/data').glob('last_original.*'):
+                for old_file in Path(self.processed_dir).glob('last_original.*'):
                     old_file.unlink()
 
                 ext = image_path.suffix.lower()
-                original_path = Path(f'/data/last_original{ext}')
+                original_path = Path(f'{self.processed_dir}/last_original{ext}')
                 with open(image_path, 'rb') as src:
                     with open(original_path, 'wb') as dst:
                         dst.write(src.read())
 
-                processed_path = Path('/data/last_processed.png')
+                processed_path = Path(self.processed_dir + '/last_processed.png')
                 with open(processed_path, 'wb') as f:
                     f.write(image_bytes)
 
-                logger.info(f"  Saved debug images to /data/")
+                logger.info(f"  Saved debug images to {self.processed_dir}/")
 
                 return image_bytes, self.mime_type
 
@@ -805,7 +813,7 @@ class ImageUploader:
             if dry_run:
                 logger.info(f"✓ DRY RUN: Skipped upload of {image_path}")
                 logger.info(f"  Would upload: {len(image_data) / 1024:.1f}KB {content_type}")
-                logger.info(f"  Check /data/last_processed.png to see result")
+                logger.info(f"  Check {self.processed_dir}/last_processed.png to see result")
                 return True
 
             # Validate image size
@@ -910,9 +918,13 @@ def main():
     # Check for updates
     check_for_updates()
 
+    # loading variables from .env file
+    load_dotenv()
+
     # Get configuration from environment variables
     webhook_url = os.getenv('WEBHOOK_URL')
     images_dir = os.getenv('IMAGES_DIR', '/images')
+    processed_dir = os.getenv('PROCESSED_DIR', '/data')
     interval_minutes = int(os.getenv('INTERVAL_MINUTES', '60'))
     selection_mode = os.getenv('SELECTION_MODE', 'random').lower()
     include_subfolders = os.getenv('INCLUDE_SUBFOLDERS', 'true').lower() == 'true'
@@ -958,6 +970,9 @@ def main():
         logger.error("Make sure to mount a directory to /images")
         exit(1)
 
+    if not os.path.exists(processed_dir):
+        os.makedirs(processed_dir)
+
     # Validate selection mode
     valid_modes = ['random', 'sequential', 'shuffle', 'newest', 'oldest']
     if selection_mode not in valid_modes:
@@ -997,6 +1012,7 @@ def main():
     uploader = ImageUploader(
         webhook_url=webhook_url,
         images_dir=images_dir,
+        processed_dir=processed_dir,
         interval_minutes=interval_minutes,
         selection_mode=selection_mode,
         include_subfolders=include_subfolders,
