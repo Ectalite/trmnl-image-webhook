@@ -6,6 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6-dev \
     libjpeg62-turbo-dev \
     zlib1g-dev \
+    libheif-dev \
+    build-essential \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies from requirements.txt
